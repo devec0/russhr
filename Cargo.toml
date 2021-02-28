@@ -1,0 +1,10 @@
+[package]
+name = "russhr"
+version = "0.1.0"
+authors = ["ec0 <ec0@ec0.io>"]
+edition = "2018"
+
+[dependencies]
+thrussh = "0.32.7"
+clap = "2.3.3"
+pbr = "1.0.4"
