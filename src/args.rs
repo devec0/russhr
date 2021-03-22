@@ -12,7 +12,7 @@ pub struct Config {
     hosts: Vec<String>
 }
 
-fn load_file(path:String) -> Result<Vec<String>, &'static str> {
+fn load_file(path:&str) -> Result<Vec<String>, &'static str> {
     
     let file = File::open(path).unwrap();
     let buf = BufReader::new(file);
@@ -76,33 +76,29 @@ pub fn parse() -> Result<Config, &'static str> {
 	hosts: Vec::new()
     };
 
-    if config.is_present("user") {
-	parsed_config.users.push(config.value_of("user").unwrap().parse().unwrap());
-	
+    if let Some(user) = config.value_of("user") {
+	parsed_config.users.push(user.to_string());
     }
     
-    if config.is_present("userfile") {
-	parsed_config.users.append(&mut load_file(config.value_of("userfile").unwrap().parse().unwrap()).unwrap());
+    if let Some(userfile) = config.value_of("userfile") {
+	parsed_config.users.append(&mut load_file(userfile).unwrap());
     }
 
-    if config.is_present("pass") {
-	parsed_config.passwords.push(config.value_of("pass").unwrap().parse().unwrap());
+    if let Some(pass) = config.value_of("pass") {
+	parsed_config.passwords.push(pass.to_string());
     }
     
-    if config.is_present("passfile") {
-	parsed_config.passwords.append(&mut load_file(config.value_of("passfile").unwrap().parse().unwrap()).unwrap());
+    if let Some(passfile) = config.value_of("passfile") {
+	parsed_config.passwords.append(&mut load_file(passfile).unwrap());
     }
 
-    if config.is_present("host") {
-	parsed_config.hosts.push(config.value_of("host").unwrap().parse().unwrap());
+    if let Some(host) = config.value_of("host") {
+	parsed_config.hosts.push(host.to_string());
+    }
+    
+    if let Some(hostfile) = config.value_of("hostfile") {
+	parsed_config.hosts.append(&mut load_file(hostfile).unwrap());
     }
 
-    if config.is_present("hostfile") {
-	parsed_config.hosts.append(&mut load_file(config.value_of("hostfile").unwrap().parse().unwrap()).unwrap());
-    }
-    //validate users
-    //validate hosts
-    //validate passwords
-    //set rate
     return Ok(parsed_config)
 }
