@@ -5,11 +5,12 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::string::String;
 
+#[derive(Debug)]
 pub struct Config {
-    rate: u32,
-    users: Vec<String>,
-    passwords: Vec<String>,
-    hosts: Vec<String>
+    pub rate: u32,
+    pub users: Vec<String>,
+    pub passwords: Vec<String>,
+    pub hosts: Vec<String>
 }
 
 fn load_file(path:&str) -> Result<Vec<String>, &'static str> {
@@ -30,31 +31,38 @@ pub fn parse() -> Result<Config, &'static str> {
 	.args(&[
 	    Arg::with_name("rate")
 		.help("Maximum number of login attempts per second")
+		.value_name("RATE")
 		.short("r")
 		.long("rate")
 		.default_value("100"),
 	    Arg::with_name("user")
 		.help("Username to test")
+		.value_name("USER")
 		.short("u")
 		.long("user"),
 	    Arg::with_name("pass")
 		.help("Password to test")
+		.value_name("PASS")
 		.short("p")
 		.long("pass"),
 	    Arg::with_name("host")
 		.help("Host to test")
+		.value_name("HOST")
 		.short("h")
 		.long("host"),
 	    Arg::with_name("userfile")
 		.help("Path to a file contain a list of users")
+		.value_name("USERFILE")
 		.short("U")
 		.long("userfile"),
 	    Arg::with_name("passfile")
 		.help("Path to a file contain a list of passwords")
+		.value_name("PASSFILE")
 		.short("P")
 		.long("passfile"),
 	    Arg::with_name("hostfile")
 		.help("Path to a file contain a list of hosts")
+		.value_name("HOSTFILE")
 		.short("H")
 		.long("hostfile"),
 	])

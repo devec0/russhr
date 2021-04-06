@@ -6,10 +6,14 @@ edition = "2018"
 
 [dependencies]
 thrussh = "0.32.7"
+thrussh-keys = "0.20.3"
 clap = "2.3.3"
-pbr = "1.0.4"
+indicatif = "0.15.0"
+futures = "0.3"
+anyhow = "1.0"
+tokio-stream = "0.1.5"
 
 [dependencies.tokio]
-version = "1.2.0"
+version = "1.4.0"
 default-features = false
 features = ["rt-multi-thread"]
