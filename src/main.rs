@@ -3,8 +3,11 @@ mod logo;
 mod args;
 mod scanner;
 
-fn main() {
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
     logo::display_logo();
-    let parsed_config = args::parse().unwrap();
-    let _result = scanner::start(parsed_config);
+    let parsed_config = args::Config::parse().unwrap();
+    let scanner = scanner::Scanner::new(parsed_config).unwrap();
+    scanner.run().await.unwrap();
+    Ok(())
 }
